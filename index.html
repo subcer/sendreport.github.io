@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-tw">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <link rel="icon" href="./images/drink2.png" type="image/x-icon">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>
+    <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
+    <title>自動發送考勤表單</title>
+</head>
+<style>
+    body{
+        padding: 50px 0;
+    }
+    .timeTime{
+    }
+    .timeTime::before{
+        display: block;
+        content: '上班';
+        position: absolute;
+        top: 20px;
+        left: 50px;        
+    }
+    .timeTime::after{
+        display: block;
+        content: '下班';
+        position: absolute;
+        top: 225px;
+        left: 50px;        
+    }
+    .newNowTime{
+        margin: 10px 50px;
+        width: 200px;
+        height: 30px;
+    }
+    .newName{
+        margin: 10px 50px;
+        width: 200px;
+        height: 30px;
+    }
+    .newNowTime2{
+        margin: 50px 50px 10px;
+        width: 200px;
+        height: 30px;
+    }
+    .workTime{
+        margin: 10px 50px;
+        width: 200px;
+        height: 30px;
+    }
+    .count_items{
+        width: 100px;
+        font-size: 24px;
+        margin: 10px 50px;
+        box-sizing: border-box;
+        padding: 10px;
+    }
+    .count_items:hover{
+        background-color: darkorchid;
+    }
+    .sendContent,.sendContent2{
+        margin: 10px 50px;
+        width: 200px;
+        height: 30px;
+    }
+</style>
+<body>
+    <h1></h1>
+    <div class="timeTime">
+        <div><input type="text" class="newNowTime" placeholder="寄送上班時間範例: 12:34:56"></div>
+        <div><input type="text" class="newName" placeholder="姓名"></div>
+        <div class="sendContent"></div>
+        <div><input type="text" class="newNowTime2" placeholder="寄送下班時間範例: 12:34:56"></div>
+        <div><input type="text" class="workTime" placeholder="總工作時數"></div>
+        <div class="sendContent2"></div>
+    </div>
+    <div class="count_items">送出</div>
+
+    <script>
+        // 定義 Web Worker 的程式碼
+        const workerCode = `
+            self.onmessage = function (e) {
+                const dataReceived = e.data;
+
+                const value1 = dataReceived.sendActionTime;
+                const value2 = dataReceived.sendActionTime2;
+                const value3 = dataReceived.newName;
+                const value4 = dataReceived.workTime;
+
+                setInterval(function(){
+                    const date = new Date();
+                    let h = date.getHours();
+                    let m = date.getMinutes();
+                    let s = date.getSeconds();
+                    if(h < 10) h = '0' + h;
+                    if(m < 10) m = '0' + m;
+                    if(s < 10) s = '0' + s;
+
+                    const nowTime = \`\${h}:\${m}:\${s}\`;
+
+                    if(nowTime === value1){
+                        self.postMessage({
+                            type: 'post',
+                            data: {
+                                'entry.1045651596': value3,
+                                'entry.805471108': '已到勤'
+                            },
+                            url: 'https://docs.google.com/forms/u/0/d/e/1FAIpQLSfCz1tQxU9WT7hWWPkc5HG-CYDeZXb1N_kEqVKGHhbFOncfow/formResponse',
+                            timeType: 'start'
+                        });
+                    }
+
+                    if(nowTime === value2){
+                        self.postMessage({
+                            type: 'post',
+                            data: {
+                                'entry.1884793113': value3,
+                                'entry.706129098': value4
+                            },
+                            url: 'https://docs.google.com/forms/u/0/d/e/1FAIpQLSc_gPgmqjnh-L5BgVZ94JFvtXrr98t5U3PWWtEK-Ez19rsUzg/formResponse',
+                            timeType: 'end'
+                        });
+                    }
+                }, 1000);
+            };
+        `;
+
+        // 創建 Blob URL 以便使用 Web Worker
+        const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
+        const workerUrl = URL.createObjectURL(workerBlob);
+        const worker = new Worker(workerUrl);
+
+        // 向 Web Worker 發送初始數據
+        $('.count_items').click(function(){
+            const sendActionTime = $('.newNowTime').val();
+            const sendActionTime2 = $('.newNowTime2').val();
+            const newName = $('.newName').val();
+            const workTime = $('.workTime').val();
+
+            // 向 Web Worker 發送訊息
+            worker.postMessage({
+                sendActionTime: sendActionTime,
+                sendActionTime2: sendActionTime2,
+                newName: newName,
+                workTime: workTime
+            });
+
+            console.log(sendActionTime + '|' + newName + '|' + sendActionTime2 + '|' + workTime);
+        });
+
+        // 處理從 Web Worker 發送的消息
+        worker.onmessage = function(e) {
+            const message = e.data;
+
+            if (message.type === 'post') {
+                $.ajax({
+                    type: 'POST',
+                    url: message.url,
+                    data: message.data,
+                    contentType: 'application/x-www-form-urlencoded',
+                    complete: function(xhr, status) {
+                        if (xhr.status == "200") {
+                            if (message.timeType === 'start') {
+                                $('.sendContent').html('上班資料已送出！ status : ' + xhr.status + ' | ' + xhr.statusText);
+                            } else if (message.timeType === 'end') {
+                                $('.sendContent2').html('下班資料已送出！ status : ' + xhr.status + ' | ' + xhr.statusText);
+                            }
+                        } else {
+                            if (message.timeType === 'start') {
+                                $('.sendContent').html('上班資料異常未送出！ status : ' + xhr.status + ' | ' + xhr.statusText);
+                            } else if (message.timeType === 'end') {
+                                $('.sendContent2').html('下班資料異常未送出！ status : ' + xhr.status + ' | ' + xhr.statusText);
+                            }
+                        }
+                    }
+                });
+            }
+        };
+    </script>
+</body>
+</html>
