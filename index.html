@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -13,8 +14,22 @@
     <div class="write_box">
       <div class="box_box">
         <div class="cool_write">
-          <div class="name_text">姓名：</div><input id="nickname" />
-          <div class="content_text">聊天內容：</div><textarea  id="content" ></textarea>
+          <div class="name_text">姓名：</div>
+          <input id="nickname" />
+          <div class="content_text">聊天內容：</div>
+          <textarea id="content" placeholder="輸入訊息或貼上圖片..."></textarea>
+          <!-- 新增圖片上傳區域 -->
+          <div class="image-upload">
+            <label for="imageInput" class="image-label">
+              <svg viewBox="0 0 24 24" width="24" height="24">
+                <path fill="currentColor" d="M19,4H5A3,3 0 0,0 2,7V17A3,3 0 0,0 5,20H19A3,3 0 0,0 22,17V7A3,3 0 0,0 19,4M19,18H5A1,1 0 0,1 4,17V7A1,1 0 0,1 5,6H19A1,1 0 0,1 20,7V17A1,1 0 0,1 19,18M17,9A1,1 0 0,0 16,8H8A1,1 0 0,0 7,9V15A1,1 0 0,0 8,16H16A1,1 0 0,0 17,15V9M8,14L10,12L11,13L14,10L16,14H8Z" />
+              </svg>
+              <span>添加圖片</span>
+            </label>
+            <input type="file" id="imageInput" accept="image/*" style="display: none;" />
+          </div>
+          <!-- 預覽圖片區域 -->
+          <div id="imagePreview" class="image-preview"></div>
         </div>
         <div class="button_box">
           <button id="send">送出資料</button>
@@ -23,5 +38,10 @@
       </div>
     </div>
     <div id="showtext"></div>
+    
+    <!-- 圖片放大檢視 Modal -->
+    <div id="imageModal" class="image-modal">
+      <img class="modal-image" src="" alt="放大圖片">
+    </div>
   </body>
 </html>
