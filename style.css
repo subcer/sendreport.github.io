@@ -61,46 +61,44 @@ body {
 
 /* 氣泡容器 */
 #showtext > div {
-    max-width: 80%;
-    align-self: flex-start;
-    animation: fadeIn 0.3s ease-in-out;
+    max-width: 100%;
+    margin-bottom: 10px;
 }
+
 
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
 }
 
-/* 自己發送的氣泡靠右對齊 */
+/* 移除原本的樣式覆蓋 */
 #showtext [class^="id"] {
-    align-self: flex-end;
+  align-self: unset;
 }
 
 /* 氣泡樣式 */
 .other_text {
-    display: inline-block;
-    background-color: rgba(85,85,85,1);
-    margin: 5px 0;
-    padding: 8px 12px;
-    border-radius: 16px;
-    color: rgba(255,255,255,0.9);
-    box-shadow: 2px 2px 3px rgba(0,0,0,0.2);
-    position: relative;
-    word-break: break-all;
+  display: inline-block;
+  background-color: rgba(85,85,85,1);
+  margin: 5px 0;
+  padding: 8px 12px;
+  border-radius: 16px;
+  color: rgba(255,255,255,0.9);
+  box-shadow: 2px 2px 3px rgba(0,0,0,0.2);
+  position: relative;
+  word-break: break-all;
+  max-width: 80%;
 }
 
-/* 自己的氣泡樣式 */
+/* 移除原本的自己氣泡樣式 */
 [class^="id"] .other_text {
-    background-color: rgba(134,217,123,1);
-    color: rgba(40,40,40,1);
+  background-color: #4F4F4F;
+  color: #eee;
 }
 
 /* 時間戳 */
 .time_style {
     display:block;
-    position: absolute;
-    top: 10px;
-    left: -100px;
     color: rgba(255,255,255,0.6);
     font-size: 10px;
     margin-bottom: 2px;
@@ -274,14 +272,13 @@ p {
     transform: scale(0.97);
 }
 
-/* 聊天中的圖片 */
+/* 確保圖片在氣泡內正確顯示 */
 .chat-image {
-    max-width: 200px;
-    max-height: 200px;
-    border-radius: 8px;
-    margin-top: 8px;
-    cursor: pointer;
-    transition: transform 0.2s;
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 8px;
+  margin-top: 8px;
+  display: block;
 }
 
 .chat-image:hover {

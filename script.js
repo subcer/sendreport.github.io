@@ -192,41 +192,44 @@ $(function(){
     });
 
     database.limitToLast(1).on('value', function(snapshot) {
-        for(var i in snapshot.val()){
-            let messageHtml = `
-                <div class="${snapshot.val()[i].id}">
-                    <div class="other_text">
-                        <div class="time_style">${snapshot.val()[i].time}</div>
-                        <div class="nickname_style">${snapshot.val()[i].nickname}</div>
-                        ${snapshot.val()[i].content ? `<p>${snapshot.val()[i].content}</p>` : ''}
-                        ${snapshot.val()[i].image ? `<img src="${snapshot.val()[i].image}" class="chat-image" onclick="showImage('${snapshot.val()[i].image}')">` : ''}
-                    </div>
-                </div>
-            `;
-            
-            $showtext.prepend(messageHtml);
-            
-            if (snapshot.val()[i].id !== 'id'+time) {
-                sendNotification(
-                    snapshot.val()[i].nickname + ' 傳送了新訊息',
-                    snapshot.val()[i].content || '傳送了一張圖片'
-                );
-            }
-        }
-        
-        $showtext.find('.id'+time).css({
-            'color':'rgba(134,217,123,1)',
-            'text-align': 'right',
-            'border-radius': '5px',
-        });
-        $showtext.find('.id'+time+' div').css({
-            'color': 'rgba(55,55,55,1)',
-            'background-color':'rgba(134,217,123,1)',
-            'display':'inline-block',
-            'text-align': 'left',
-            'word-break': 'break-all'
-        });
-    });
+      for(var i in snapshot.val()){
+          // 判斷是否為自己發送的訊息
+          const isSelf = snapshot.val()[i].id === 'id'+time;
+          
+          let messageHtml = `
+              <div class="${snapshot.val()[i].id}" style="text-align: ${isSelf ? 'right' : 'left'}">
+                  <div class="other_text" style="${isSelf ? 'background-color: rgba(134,217,123,1); color: rgba(40,40,40,1);' : ''}">
+                      <div class="time_style">${snapshot.val()[i].time}</div>
+                      <div class="nickname_style">${snapshot.val()[i].nickname}</div>
+                      ${snapshot.val()[i].content ? `<p>${snapshot.val()[i].content}</p>` : ''}
+                      ${snapshot.val()[i].image ? `<img src="${snapshot.val()[i].image}" class="chat-image" onclick="showImage('${snapshot.val()[i].image}')">` : ''}
+                  </div>
+              </div>
+          `;
+          
+          $showtext.prepend(messageHtml);
+          
+          if (snapshot.val()[i].id !== 'id'+time) {
+              sendNotification(
+                  snapshot.val()[i].nickname + ' 傳送了新訊息',
+                  snapshot.val()[i].content || '傳送了一張圖片'
+              );
+          }
+      }
+
+      $showtext.find('.id'+time).css({
+          'color':'rgba(134,217,123,1)',
+          'text-align': 'right',
+          'border-radius': '5px',
+      });
+      $showtext.find('.id'+time+' div').css({
+          'color': 'rgba(55,55,55,1)',
+          'background-color':'rgba(134,217,123,1)',
+          'display':'inline-block',
+          'text-align': 'left',
+          'word-break': 'break-all'
+      });
+  });
     
     function remove(){
         database.remove();
