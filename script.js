@@ -205,7 +205,7 @@ $(function () {
     });
 
     // 發送訊息邏輯
-    function write() {
+    async function write() {
         const nickname = $nickname.val().trim() || '匿名';
         let content = $content.val();
 
@@ -229,7 +229,9 @@ $(function () {
 
         // 處理斜線指令
         if (content.startsWith('/')) {
-            const commandResult = processSlashCommand(content, nickname);
+            // Updated to await async command processing (e.g. Weather API)
+            const commandResult = await processSlashCommand(content, nickname);
+
             if (typeof commandResult === 'object' && commandResult.type) {
                 content = commandResult.content;
                 if (commandResult.type === 'poll') {
@@ -238,7 +240,7 @@ $(function () {
                     bombData = commandResult.data;
                 }
             } else {
-                content = commandResult; // Fallback (shouldn't happen with new logic)
+                content = commandResult; // Fallback
             }
         }
 
@@ -698,9 +700,18 @@ function showToast(message) {
 }
 
 function showImage(src) {
-    const modal = $('<div class="image-modal">').append($('<img class="modal-image">').attr('src', src));
-    modal.click(function () { $(this).fadeOut(() => $(this).remove()); });
-    $('body').append(modal).fadeIn();
+    const $modal = $('#imageModal');
+    const $img = $modal.find('.modal-image');
+
+    $img.attr('src', src);
+
+    // Force Flexbox for centering, handled nicely with fadeIn
+    $modal.css('display', 'flex').hide().fadeIn(200);
+
+    // Unbind previous events to prevent stacking
+    $modal.off('click').on('click', function () {
+        $(this).fadeOut(200);
+    });
 }
 
 function escapeHtml(text) {
@@ -807,7 +818,8 @@ function parseMarkdown(text) {
 }
 
 // 斜線指令處理器
-function processSlashCommand(text, nickname) {
+// 斜線指令處理器 (Async)
+async function processSlashCommand(text, nickname) {
     if (!text.startsWith('/')) return text;
 
     const match = text.match(/^\/(\w+)\s*(.*)/);
@@ -837,8 +849,6 @@ function processSlashCommand(text, nickname) {
 
         case 'poll':
             // Logic: /poll Question Opt1 Opt2 ...
-            // Use regex or splitting. Simple split by space.
-            // Support quotes? For simplicity, just split by space logic first.
             const pollParts = args.split(/\s+/);
             if (pollParts.length < 3) {
                 return { type: 'text', content: `❌ 投票格式錯誤: /poll 問題 選項1 選項2 (至少兩個選項)` };
@@ -849,26 +859,23 @@ function processSlashCommand(text, nickname) {
 
             return {
                 type: 'poll',
-                content: `📊 投票: ${question}`, // Fallback text for old clients (though we are updating all)
+                content: `📊 投票: ${question}`,
                 data: {
                     question: question,
                     options: options,
-                    // votes will be added in Firebase structure
                 }
             };
 
         case 'bomb':
             // /bomb 10 Message
-            // We need to parse everything after potential seconds.
-            // args is everything after command.
             const bombParts = args.split(/\s+/);
             let seconds = 10;
             let msgContent = args;
 
-            // Check if first arg is number
-            if (bombParts.length > 0 && /^\d+$/.test(bombParts[0])) {
-                seconds = parseInt(bombParts[0], 10);
-                // Reconstruct message: slice off the seconds part
+            // Improve parsing: handle "5s", "5", etc.
+            const potentialSeconds = parseInt(bombParts[0], 10);
+            if (!isNaN(potentialSeconds) && potentialSeconds > 0) {
+                seconds = potentialSeconds;
                 msgContent = args.substring(bombParts[0].length).trim();
             }
 
@@ -888,6 +895,61 @@ function processSlashCommand(text, nickname) {
                     duration: seconds
                 }
             };
+
+        case 'weather':
+            const city = args || 'Taipei';
+            try {
+                // 1. Geocoding
+                let geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=zh&format=json`;
+                let geoRes = await fetch(geoUrl);
+                let geoData = await geoRes.json();
+
+                // Fallback: If no results and input is 2-char Chinese, try appending '市'
+                if ((!geoData.results || geoData.results.length === 0) && /^[\u4e00-\u9fa5]{2}$/.test(city)) {
+                    const retryCity = city + '市';
+                    geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(retryCity)}&count=1&language=zh&format=json`;
+                    geoRes = await fetch(geoUrl);
+                    geoData = await geoRes.json();
+                }
+
+                if (!geoData.results || geoData.results.length === 0) {
+                    return { type: 'text', content: `❌ 找不到城市: ${city} (請嘗試輸入完整名稱，例如：台北市)` };
+                }
+
+                const location = geoData.results[0];
+                const lat = location.latitude;
+                const lon = location.longitude;
+                const locName = location.name;
+
+                // 2. Weather
+                const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&timezone=auto`;
+                const weatherRes = await fetch(weatherUrl);
+                const weatherData = await weatherRes.json();
+
+                const current = weatherData.current_weather;
+                const temp = current.temperature;
+                const wind = current.windspeed;
+                const weatherCode = current.weathercode;
+
+                let weatherDesc = '未知';
+                if (weatherCode === 0) weatherDesc = '☀️ 晴朗';
+                else if (weatherCode <= 3) weatherDesc = '⛅ 多雲';
+                else if (weatherCode <= 48) weatherDesc = '🌫️ 霧';
+                else if (weatherCode <= 55) weatherDesc = '🌧️ 毛毛雨';
+                else if (weatherCode <= 65) weatherDesc = '🌧️ 下雨';
+                else if (weatherCode <= 77) weatherDesc = '❄️ 降雪';
+                else if (weatherCode <= 82) weatherDesc = '⛈️ 陣雨';
+                else if (weatherCode <= 99) weatherDesc = '🌩️ 雷雨';
+
+                return {
+                    type: 'text',
+                    content: `🌡️ **${locName}** 天氣\n${weatherDesc}\n溫度: **${temp}°C**\n風速: ${wind} km/h`
+                };
+
+            } catch (e) {
+                console.error(e);
+                return { type: 'text', content: `❌ 查詢失敗，請稍後再試。` };
+            }
 
         // 隱藏指令：計算機
         case 'calc':
