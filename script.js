@@ -234,7 +234,10 @@ $(function () {
             replyTo: currentReply // 包含回覆資料
         };
 
-        database.push(postData);
+
+
+        // 改為推送到 messages 節點
+        messagesRef.push(postData);
         $content.val('');
         selectedImage = null;
         updateImagePreview();
@@ -321,10 +324,62 @@ $(function () {
         });
     }, 2000);
 
+    // Online Presence Logic (New Feature)
+    const $onlineCount = $('#onlineCount');
+    const $onlineList = $('#onlineList');
+    // Using global firebase object for .info because it's a virtual path
+    const connectedRef = firebase.database().ref('.info/connected');
+    const myPresenceRef = database.child('online/' + userId);
+
+    connectedRef.on('value', function (snap) {
+        if (snap.val() === true) {
+            // We're connected (or reconnected)!
+
+            // 1. Tell server to remove us if we disconnect
+            myPresenceRef.onDisconnect().remove();
+
+            // 2. Set our status to online
+            const nickname = $nickname.val().trim() || '匿名';
+            myPresenceRef.set({
+                nickname: nickname,
+                status: 'online',
+                lastChanged: firebase.database.ServerValue.TIMESTAMP
+            });
+        }
+    });
+
+    // Update presence nickname if user changes it
+    $nickname.on('change', function () {
+        const newName = $(this).val().trim() || '匿名';
+        myPresenceRef.update({ nickname: newName });
+    });
+
+    // Listen for all online users
+    database.child('online').on('value', function (snapshot) {
+        const onlineUsers = snapshot.val() || {};
+        const count = Object.keys(onlineUsers).length;
+
+        $onlineCount.text(`${count} 人在線`);
+
+        // Build tooltip list
+        const names = Object.values(onlineUsers).map(u => u.nickname || '匿名');
+        if (names.length > 0) {
+            $onlineList.text(names.join(', ')); // Or use <ul> for nicer list
+            // If too many, truncate
+            if (names.length > 10) {
+                $onlineList.text(names.slice(0, 10).join(', ') + ` ...等 ${count} 人`);
+            }
+        } else {
+            $onlineList.text('無人');
+        }
+    });
+
+
     // 清除聊天紀錄邏輯
     $('#clear').on('click', function () {
         if (confirm('確定要刪除所有聊天記錄嗎？\n⚠️ 此動作無法復原！所有人的對話都會被清空。')) {
-            database.remove()
+            // 只清除 messages 節點，保留 online 和 typing 狀態
+            database.child('messages').remove()
                 .then(() => {
                     showToast('聊天記錄已清空');
                     setTimeout(() => window.location.reload(), 1000);
@@ -344,17 +399,44 @@ $(function () {
         }
     });
 
-    // 訊息監聽器 (改進版)
+    // 處理訊息點擊 (回覆功能) - 使用事件委派 (Delegation)
+    $('#showtext').on('click', '.other_text', function (e) {
+        // 如果是已收回的訊息，不處理
+        if ($(this).hasClass('recalled')) return;
+
+        // 從 data 屬性讀取資料
+        const nickname = $(this).attr('data-nickname'); // .attr() 確保讀取原始字串 (避免 jQuery 自動轉型)
+        const content = $(this).attr('data-content');
+        const msgId = $(this).attr('data-msg-id');
+
+        // 觸發回覆邏輯
+        handleMessageClick(this, nickname, content, msgId);
+    });
+
+    // 訊息監聽器 (改進版) - Listen to 'messages' node
     let initialLoad = true;
+    const messagesRef = database.child('messages');
+
+    // Tab Alert (分頁標題通知)
+    let unreadCount = 0;
+    const originalTitle = document.title;
+
+    // 監聽視窗可見度變化 (回到視窗時重置標題)
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) {
+            unreadCount = 0;
+            document.title = originalTitle;
+        }
+    });
 
     // 載入最後 50 則訊息
-    database.limitToLast(50).on('child_added', function (snapshot) {
-        // 忽略 'typing' 節點 (防止它被誤認為訊息讀取)
-        if (snapshot.key === 'typing') return;
+    messagesRef.limitToLast(50).on('child_added', function (snapshot) {
+        // 因已分流到 /messages，不再需要過濾 typing 或 online 節點
 
         const msg = snapshot.val();
         const msgId = snapshot.key; // 取得 Firebase 金鑰 (Key)
         const isSelf = msg.userId === userId;
+        const isRecalled = msg.recalled === true;
 
         // 如果有回覆內容，則渲染引用區塊
         let replyHtml = '';
@@ -367,6 +449,23 @@ $(function () {
             `;
         }
 
+        // 決定訊息內容
+        let contentHtml = '';
+        if (isRecalled) {
+            contentHtml = `<span class="recalled-text">🚫 訊息已收回</span>`;
+        } else {
+            // Processing Order: Escape -> Markdown -> Linkify
+            let processedContent = escapeHtml(msg.content);
+            processedContent = parseMarkdown(processedContent);
+            processedContent = linkify(processedContent);
+
+            contentHtml = `
+                    ${replyHtml}
+                    ${msg.content ? `<p>${processedContent}</p>` : ''}
+                    ${msg.image ? `<img src="${msg.image}" class="chat-image" onclick="event.stopPropagation(); showImage('${msg.image}')">` : ''}
+            `;
+        }
+
         // 渲染訊息
         const messageHtml = `
             <div class="message-row ${isSelf ? 'self' : 'other'}" id="${msgId}">
@@ -374,11 +473,16 @@ $(function () {
                     ${isSelf ? `<span class="time_style">${msg.time}</span> <span class="nickname_style">${msg.nickname}</span>`
                 : `<span class="nickname_style">${msg.nickname}</span> <span class="time_style">${msg.time}</span>`}
                 </div>
-                <!-- 加入點擊事件以觸發回覆 -->
-                <div class="other_text" onclick="handleMessageClick(this, '${msg.nickname}', '${escapeHtml(msg.content || '[圖片]')}', '${msgId}')">
-                    ${replyHtml}
-                    ${msg.content ? `<p>${linkify(escapeHtml(msg.content))}</p>` : ''}
-                    ${msg.image ? `<img src="${msg.image}" class="chat-image" onclick="event.stopPropagation(); showImage('${msg.image}')">` : ''}
+                <div class="message-content-wrapper">
+                    ${isSelf && !isRecalled ? `<button class="recall-btn-v2" onclick="recallMessage('${msgId}')" title="收回訊息">↩</button>` : ''}
+                    <!-- 加入點擊事件以觸發回覆 - 使用 data 屬性而非 onclick 以避免語法錯誤 -->
+                    <div class="other_text ${isRecalled ? 'recalled' : ''}" 
+                         data-msg-id="${msgId}"
+                         data-nickname="${escapeHtml(msg.nickname)}"
+                         data-content="${escapeHtml(msg.content || '[圖片]')}"
+                    >
+                        ${contentHtml}
+                    </div>
                 </div>
             </div>
         `;
@@ -386,14 +490,41 @@ $(function () {
         $showtext.append(messageHtml);
         scrollToBottom();
 
-        // 通知 (僅針對來自他人的新訊息)
-        if (!initialLoad && !isSelf) {
+        // 通知 (僅針對來自他人的新訊息且未收回)
+        if (!initialLoad && !isSelf && !isRecalled) {
+            // 聲音通知
             if (isSoundEnabled) {
                 notificationSound.currentTime = 0;
-                // 部分瀏覽器需要互動才能播放音效，但在活躍的工作階段通常沒問題
                 notificationSound.play().catch(e => console.error('Sound blocked:', e));
             }
+
+            // 桌面通知
             sendNotification(msg.nickname, msg.content || '[收到一張圖片]');
+
+            // 分頁標題通知 (如果是背景執行)
+            if (document.hidden) {
+                unreadCount++;
+                document.title = `(${unreadCount}) ${msg.nickname} 傳來訊息...`;
+            }
+        }
+    });
+
+    // 監聽訊息修改 (收回同步) - Listen to 'messages' node
+    messagesRef.on('child_changed', function (snapshot) {
+        const msg = snapshot.val();
+        const msgId = snapshot.key;
+
+        // 如果訊息變成已收回狀態
+        if (msg.recalled) {
+            const $msgRow = $(`#${msgId}`);
+            const $bubble = $msgRow.find('.other_text');
+
+            // 更新樣式與內容
+            $bubble.addClass('recalled');
+            $bubble.html('<span class="recalled-text">🚫 訊息已收回</span>');
+            $bubble.removeAttr('onclick'); // 移除點擊事件
+            $msgRow.find('.recall-btn-v2').remove(); // 移除收回按鈕
+            $msgRow.find('.reply-context').remove(); // 移除引用
         }
     });
 
@@ -403,8 +534,8 @@ $(function () {
         scrollToBottom();
     });
 
-    // 監聽訊息刪除 (同步清除畫面)
-    database.on('child_removed', function (snapshot) {
+    // 監聽訊息刪除 (同步清除畫面) - Listen to 'messages' node
+    messagesRef.on('child_removed', function (snapshot) {
         const msgId = snapshot.key;
         $(`#${msgId}`).remove();
     });
@@ -478,3 +609,34 @@ window.handleMessageClick = function (element, nickname, content) {
     });
     document.dispatchEvent(event);
 };
+
+// 收回訊息功能
+window.recallMessage = function (msgId) {
+    if (confirm('確定要收回這則訊息嗎？')) {
+        // 使用 messagesRef (或完整路徑) 更新
+        firebase.database().ref('messages').child(msgId).update({
+            recalled: true,
+            content: null,
+            image: null,
+            replyTo: null
+        });
+    }
+};
+
+function parseMarkdown(text) {
+    if (!text) return text;
+
+    // 1. Code Blocks: ```code```
+    // Use [\s\S] to match newlines too
+    text = text.replace(/```([\s\S]*?)```/g, function (match, code) {
+        return `<pre><code>${code}</code></pre>`;
+    });
+
+    // 2. Bold: **text**
+    text = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+
+    // 3. Italic: *text*
+    text = text.replace(/\*(.*?)\*/g, '<i>$1</i>');
+
+    return text;
+}
