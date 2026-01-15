@@ -1,47 +1,109 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-    <title>線上聊天室IM</title>
-    <script src="https://www.gstatic.com/firebasejs/6.2.0/firebase.js"></script>
-    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
-    <script src="script.js"></script>
-    <link href="style.css" rel="stylesheet" type="text/css" />
-  </head>
 
-  <body>
-    <div class="write_box">
-      <div class="box_box">
-        <div class="cool_write">
-          <div class="name_text">姓名：</div>
-          <input id="nickname" />
-          <div class="content_text">聊天內容：</div>
-          <textarea id="content" placeholder="輸入訊息或貼上圖片..."></textarea>
-          <!-- 新增圖片上傳區域 -->
-          <div class="image-upload">
-            <label for="imageInput" class="image-label">
-              <svg viewBox="0 0 24 24" width="24" height="24">
-                <path fill="currentColor" d="M19,4H5A3,3 0 0,0 2,7V17A3,3 0 0,0 5,20H19A3,3 0 0,0 22,17V7A3,3 0 0,0 19,4M19,18H5A1,1 0 0,1 4,17V7A1,1 0 0,1 5,6H19A1,1 0 0,1 20,7V17A1,1 0 0,1 19,18M17,9A1,1 0 0,0 16,8H8A1,1 0 0,0 7,9V15A1,1 0 0,0 8,16H16A1,1 0 0,0 17,15V9M8,14L10,12L11,13L14,10L16,14H8Z" />
-              </svg>
-              <span>添加圖片</span>
-            </label>
-            <input type="file" id="imageInput" accept="image/*" style="display: none;" />
-          </div>
-          <!-- 預覽圖片區域 -->
-          <div id="imagePreview" class="image-preview"></div>
-        </div>
-        <div class="button_box">
-          <button id="send">送出資料</button>
-          <button id="clear">清除資料</button>
-        </div>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>線上聊天室IM</title>
+  <script src="https://www.gstatic.com/firebasejs/6.2.0/firebase.js"></script>
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+  <script src="script.js"></script>
+  <link href="style.css" rel="stylesheet" type="text/css" />
+</head>
+
+<body>
+  <!-- Top Right Clear Button -->
+  <button id="clear" class="floating-clear-btn" title="清除所有紀錄">🗑️</button>
+
+  <div id="showtext"></div>
+
+  <div class="write_box">
+    <!-- Emoji Picker Container (Hidden by default) -->
+    <div id="emojiPicker" class="emoji-picker hidden">
+      <div class="emoji-grid">
+        <!-- Common emojis will be injected here via JS -->
+        <span>😀</span><span>😂</span><span>😍</span><span>😭</span><span>😡</span><span>👍</span><span>❤️</span><span>🎉</span>
+        <span>🥹</span><span>🙏</span><span>🔥</span><span>👀</span><span>✨</span><span>💯</span><span>👋</span><span>🤣</span>
       </div>
     </div>
-    <div id="showtext"></div>
-    
-    <!-- 圖片放大檢視 Modal -->
-    <div id="imageModal" class="image-modal">
-      <img class="modal-image" src="" alt="放大圖片">
+
+    <div class="box_box">
+      <div class="cool_write">
+        <div class="input-row">
+          <div class="name_group">
+            <span class="name_text">姓名：</span>
+            <input id="nickname" placeholder="您的暱稱" />
+            <!-- Color Picker -->
+            <input type="color" id="colorPicker" value="#0066cc" title="選擇氣泡顏色"
+              style="margin-left: 5px; height: 28px; width: 30px; border: none; background: none; cursor: pointer;">
+          </div>
+        </div>
+
+        <div class="message-area">
+          <!-- Typing Indicator -->
+          <div id="typingIndicator" class="typing-indicator"></div>
+
+          <!-- Reply Preview (Hidden by default) -->
+          <div id="replyPreview" class="reply-preview hidden">
+            <div class="reply-info">
+              <span class="reply-label">回覆給：</span>
+              <span id="replyNickname" class="reply-nickname"></span>
+              <span id="replyContent" class="reply-content-preview"></span>
+            </div>
+            <button id="cancelReply" class="close-reply">×</button>
+          </div>
+
+          <textarea id="content" placeholder="輸入訊息..."></textarea>
+
+          <div class="toolbar">
+            <!-- Emoji Toggle -->
+            <button id="emojiBtn" class="tool-btn" title="插入表情符號">
+              <svg viewBox="0 0 24 24" width="24" height="24">
+                <path fill="currentColor"
+                  d="M12,17.5C14.33,17.5 16.3,16.04 17.11,14H6.89C7.69,16.04 9.67,17.5 12,17.5M8.5,11A1.5,1.5 0 0,0 10,9.5A1.5,1.5 0 0,0 8.5,8A1.5,1.5 0 0,0 7,9.5A1.5,1.5 0 0,0 8.5,11M15.5,11A1.5,1.5 0 0,0 17,9.5A1.5,1.5 0 0,0 15.5,8A1.5,1.5 0 0,0 14,9.5A1.5,1.5 0 0,0 15.5,11M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,20C16.41,20 20,16.41 20,12C20,7.59 16.41,4 12,4C7.59,4 4,7.59 4,12C4,16.41 7.59,20 12,20Z" />
+              </svg>
+            </button>
+
+            <!-- Image Upload -->
+            <div class="image-upload">
+              <label for="imageInput" class="tool-btn" title="上傳圖片">
+                <svg viewBox="0 0 24 24" width="24" height="24">
+                  <path fill="currentColor"
+                    d="M19,4H5A3,3 0 0,0 2,7V17A3,3 0 0,0 5,20H19A3,3 0 0,0 22,17V7A3,3 0 0,0 19,4M19,18H5A1,1 0 0,1 4,17V7A1,1 0 0,1 5,6H19A1,1 0 0,1 20,7V17A1,1 0 0,1 19,18M17,9A1,1 0 0,0 16,8H8A1,1 0 0,0 7,9V15A1,1 0 0,0 8,16H16A1,1 0 0,0 17,15V9M8,14L10,12L11,13L14,10L16,14H8Z" />
+                </svg>
+              </label>
+              <input type="file" id="imageInput" accept="image/*" style="display: none;" />
+            </div>
+
+            <!-- Sound Toggle -->
+            <button id="soundBtn" class="tool-btn" title="開啟/關閉提示音">
+              <!-- Default: Sound On Icon -->
+              <svg id="soundOnIcon" viewBox="0 0 24 24" width="24" height="24">
+                <path fill="currentColor"
+                  d="M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.84 14,18.7V20.77C18,19.86 21,16.28 21,12C21,7.72 18,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16.02C15.5,15.29 16.5,13.76 16.5,12M3,9V15H7L12,20V4L7,9H3Z" />
+              </svg>
+              <!-- Sound Off Icon (Hidden by default) -->
+              <svg id="soundOffIcon" viewBox="0 0 24 24" width="24" height="24" style="display: none;">
+                <path fill="currentColor"
+                  d="M12,4L9.91,6.09L12,8.18M4.27,3L3,4.27L7.73,9H3V15H7L12,20V13.27L16.25,17.53C15.58,18.04 14.83,18.46 14,18.7V20.77C15.38,20.45 16.63,19.82 17.68,18.96L19.73,21L21,19.73L12,10.73M19,12C19,12.94 18.8,13.82 18.46,14.64L19.97,16.15C20.62,14.91 21,13.5 21,12C21,7.72 18,4.14 14,3.23V5.29C16.89,6.15 19,8.83 19,12M16.5,12C16.5,10.23 15.5,8.71 14,7.97V10.18L16.45,12.63C16.5,12.43 16.5,12.21 16.5,12Z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- 預覽圖片區域 -->
+        <div id="imagePreview" class="image-preview"></div>
+      </div>
+      <div class="button_box">
+        <button id="send">送出</button>
+      </div>
     </div>
-  </body>
+  </div>
+
+  <!-- 圖片放大檢視 Modal -->
+  <div id="imageModal" class="image-modal">
+    <img class="modal-image" src="" alt="放大圖片">
+  </div>
+</body>
+
 </html>
