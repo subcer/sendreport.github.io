@@ -224,9 +224,22 @@ $(function () {
 
         const timeStr = `${yyyy}/${mm}/${dd} ${hh}:${min}:${ss}`;
 
+        let pollData = null;
+        let bombData = null;
+
         // 處理斜線指令
         if (content.startsWith('/')) {
-            content = processSlashCommand(content, nickname);
+            const commandResult = processSlashCommand(content, nickname);
+            if (typeof commandResult === 'object' && commandResult.type) {
+                content = commandResult.content;
+                if (commandResult.type === 'poll') {
+                    pollData = commandResult.data;
+                } else if (commandResult.type === 'bomb') {
+                    bombData = commandResult.data;
+                }
+            } else {
+                content = commandResult; // Fallback (shouldn't happen with new logic)
+            }
         }
 
         const postData = {
@@ -236,7 +249,9 @@ $(function () {
             userId: userId, // 持久化 ID
             image: selectedImage,
             timestamp: firebase.database.ServerValue.TIMESTAMP,
-            replyTo: currentReply // 包含回覆資料
+            replyTo: currentReply, // 包含回覆資料
+            poll: pollData,
+            bomb: bombData
         };
 
 
@@ -440,6 +455,20 @@ $(function () {
 
         const msg = snapshot.val();
         const msgId = snapshot.key; // 取得 Firebase 金鑰 (Key)
+
+        // Bomb Logic: Check expiry immediately
+        if (msg.bomb) {
+            const timeLeft = msg.bomb.expireAt - Date.now();
+            if (timeLeft <= 0) {
+                // Already exploded, remove from DB if it still exists (cleanup)
+                // But multiple clients might do this, so maybe just ignore rendering.
+                // For safety, just don't render.
+                // Also, if I am the sender, maybe I should clean it up?
+                // Let's just hide it.
+                return;
+            }
+        }
+
         const isSelf = msg.userId === userId;
         const isRecalled = msg.recalled === true;
 
@@ -471,12 +500,36 @@ $(function () {
             `;
         }
 
+        // Bomb Logic (Visuals)
+        let bombHtml = '';
+        if (msg.bomb && !isRecalled) {
+            const remaining = Math.max(0, Math.ceil((msg.bomb.expireAt - Date.now()) / 1000));
+            bombHtml = `<span class="bomb-countdown" id="bomb-${msgId}">💣 ${remaining}s</span>`;
+
+            // Start Countdown Timer
+            // Note: We need to ensure we don't set multiple intervals if re-rendering, 
+            // but child_added only runs once per message.
+            const timer = setInterval(() => {
+                const timeLeft = msg.bomb.expireAt - Date.now();
+                if (timeLeft <= 0) {
+                    clearInterval(timer);
+                    $(`#${msgId}`).fadeOut(500, function () { $(this).remove(); });
+
+                    // Trigger removal from DB
+                    firebase.database().ref('messages/' + msgId).remove();
+                } else {
+                    $(`#bomb-${msgId}`).text(`💣 ${Math.ceil(timeLeft / 1000)}s`);
+                }
+            }, 1000);
+        }
+
         // 渲染訊息
         const messageHtml = `
-            <div class="message-row ${isSelf ? 'self' : 'other'}" id="${msgId}">
+            <div class="message-row ${isSelf ? 'self' : 'other'}" id="${msgId}" data-timestamp="${msg.timestamp || 0}">
                 <div class="meta-info">
                     ${isSelf ? `<span class="time_style">${msg.time}</span> <span class="nickname_style">${msg.nickname}</span>`
                 : `<span class="nickname_style">${msg.nickname}</span> <span class="time_style">${msg.time}</span>`}
+                    ${bombHtml}
                 </div>
                 <div class="message-content-wrapper">
                     ${isSelf && !isRecalled ? `<button class="recall-btn-v2" onclick="recallMessage('${msgId}')" title="收回訊息">↩</button>` : ''}
@@ -494,6 +547,8 @@ $(function () {
                          data-content="${escapeHtml(msg.content || '[圖片]')}"
                     >
                         ${contentHtml}
+                        <!-- Render Poll Card if exists -->
+                        ${msg.poll ? generatePollHtml(msgId, msg.poll) : ''}
                     </div>
                 </div>
                 
@@ -502,14 +557,40 @@ $(function () {
             </div>
         `;
 
-        $showtext.append(messageHtml);
+        // Smart Insert: Ensure message is placed in correct chronological order
+        // This handles duplicate calls or 'limitToLast' backfilling old messages when newer ones are deleted.
+        const $rows = $showtext.children('.message-row');
+        if ($rows.length === 0) {
+            $showtext.append(messageHtml);
+        } else {
+            const lastTimestamp = $rows.last().data('timestamp') || 0;
+            if (msg.timestamp >= lastTimestamp) {
+                $showtext.append(messageHtml);
+            } else {
+                // Insert at correct position
+                let inserted = false;
+                $rows.each(function () {
+                    const ts = $(this).data('timestamp') || 0;
+                    if (ts > msg.timestamp) {
+                        $(this).before(messageHtml);
+                        inserted = true;
+                        return false; // break loop
+                    }
+                });
+                if (!inserted) {
+                    $showtext.append(messageHtml);
+                }
+            }
+        }
 
         // Render existing reactions if any
         if (msg.reactions) {
             renderReactions(msgId, msg.reactions);
         }
 
-        scrollToBottom();
+        if (msg.timestamp >= ($rows.last().data('timestamp') || 0)) {
+            scrollToBottom();
+        }
 
         // 通知 (僅針對來自他人的新訊息且未收回)
         if (!initialLoad && !isSelf && !isRecalled) {
@@ -556,6 +637,20 @@ $(function () {
         } else {
             // If reactions were removed entirely
             $(`#reactions-${msgId}`).empty();
+        }
+
+        // 3. 處理投票更新
+        if (msg.poll) {
+            const $msgRow = $(`#${msgId}`);
+            const $pollContainer = $msgRow.find('.poll-card');
+            const newPollHtml = generatePollHtml(msgId, msg.poll);
+
+            if ($pollContainer.length > 0) {
+                $pollContainer.replaceWith(newPollHtml);
+            } else {
+                // Should exist, but if not, append to bubble
+                $msgRow.find('.other_text').append(newPollHtml);
+            }
         }
     });
 
@@ -658,15 +753,54 @@ function parseMarkdown(text) {
     if (!text) return text;
 
     // 1. Code Blocks: ```code```
-    // Use [\s\S] to match newlines too
-    text = text.replace(/```([\s\S]*?)```/g, function (match, code) {
-        return `<pre><code>${code}</code></pre>`;
+    // Use [\s\S] to match newlines    // Code blocks with syntax highlighting (basic) + Run Button
+    // Simpler Regex: Capture everything and parse manually
+    text = text.replace(/```([\s\S]*?)```/g, function (match, content) {
+        content = content.trim(); // Clean leading/trailing whitespace including newlines
+
+        let lang = '';
+        let code = content;
+
+        // Check if first line/word is a language
+        const firstLineMatch = content.match(/^(\w+)(\s|[\r\n])/);
+        if (firstLineMatch) {
+            const potentialLang = firstLineMatch[1].toLowerCase();
+            if (['html', 'javascript', 'js', 'css'].includes(potentialLang)) {
+                lang = potentialLang;
+                code = content.substring(firstLineMatch[0].length).trim();
+            }
+        }
+
+        const isRunnabled = ['html', 'javascript', 'js'].includes(lang);
+
+        let headerHtml = '';
+        if (isRunnabled) {
+            // Encode code for passing to function safely
+            const encodedCode = encodeURIComponent(code);
+            headerHtml = `
+                <div class="code-header">
+                    <span>${lang}</span>
+                    <button class="run-code-btn" onclick="openCodeRunner('${encodedCode}', '${lang}')">▶️ 執行/預覽</button>
+                </div>
+            `;
+        } else if (lang) {
+            headerHtml = `
+                <div class="code-header">
+                    <span>${lang}</span>
+                </div>
+            `;
+        }
+
+        return `<div class="code-block-wrapper">${headerHtml}<pre><code>${code}</code></pre></div>`;
     });
 
-    // 2. Bold: **text**
-    text = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+    // Inline code
+    text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
 
-    // 3. Italic: *text*
+    // Bold
+    text = text.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+
+    // Italic
     text = text.replace(/\*(.*?)\*/g, '<i>$1</i>');
 
     return text;
@@ -686,37 +820,90 @@ function processSlashCommand(text, nickname) {
         case 'roll':
             let max = 100;
             if (args) {
-                const parts = args.split(/[^\d]+/); // Split by non-digits
+                const parts = args.split(/[^\d]+/);
                 if (parts.length >= 1 && parts[0]) {
                     max = parseInt(parts[0], 10);
                 }
             }
             const rollResult = Math.floor(Math.random() * max) + 1;
-            return `🎲 ${nickname} 擲出了 **${rollResult}** 點 (1-${max})`;
+            return { type: 'text', content: `🎲 ${nickname} 擲出了 **${rollResult}** 點 (1-${max})` };
 
         case 'coin':
             const isHeads = Math.random() < 0.5;
-            return `🪙 ${nickname} 擲出了 **${isHeads ? '正面' : '反面'}**`;
+            return { type: 'text', content: `🪙 ${nickname} 擲出了 **${isHeads ? '正面' : '反面'}**` };
 
         case 'me':
-            return `* ${nickname} ${args} *`;
+            return { type: 'text', content: `* ${nickname} ${args} *` };
+
+        case 'poll':
+            // Logic: /poll Question Opt1 Opt2 ...
+            // Use regex or splitting. Simple split by space.
+            // Support quotes? For simplicity, just split by space logic first.
+            const pollParts = args.split(/\s+/);
+            if (pollParts.length < 3) {
+                return { type: 'text', content: `❌ 投票格式錯誤: /poll 問題 選項1 選項2 (至少兩個選項)` };
+            }
+
+            const question = pollParts[0];
+            const options = pollParts.slice(1);
+
+            return {
+                type: 'poll',
+                content: `📊 投票: ${question}`, // Fallback text for old clients (though we are updating all)
+                data: {
+                    question: question,
+                    options: options,
+                    // votes will be added in Firebase structure
+                }
+            };
+
+        case 'bomb':
+            // /bomb 10 Message
+            // We need to parse everything after potential seconds.
+            // args is everything after command.
+            const bombParts = args.split(/\s+/);
+            let seconds = 10;
+            let msgContent = args;
+
+            // Check if first arg is number
+            if (bombParts.length > 0 && /^\d+$/.test(bombParts[0])) {
+                seconds = parseInt(bombParts[0], 10);
+                // Reconstruct message: slice off the seconds part
+                msgContent = args.substring(bombParts[0].length).trim();
+            }
+
+            if (!msgContent) {
+                return { type: 'text', content: `❌ 格式錯誤: /bomb [秒數] [訊息內容]` };
+            }
+
+            // Max 600 seconds, Min 5 seconds
+            if (seconds > 600) seconds = 600;
+            if (seconds < 5) seconds = 5;
+
+            return {
+                type: 'bomb',
+                content: msgContent,
+                data: {
+                    expireAt: Date.now() + (seconds * 1000),
+                    duration: seconds
+                }
+            };
 
         // 隱藏指令：計算機
         case 'calc':
             try {
-                // 安全限制：只允許數字和基本運算符
                 if (/^[0-9+\-*/().\s]+$/.test(args)) {
                     // eslint-disable-next-line no-new-func
                     const result = new Function('return ' + args)();
-                    return `🧮 ${args} = **${result}**`;
+                    return { type: 'text', content: `🧮 ${args} = **${result}**` };
                 }
-                return text;
+                return { type: 'text', content: text };
             } catch (e) {
-                return text;
+                return { type: 'text', content: text };
             }
 
         default:
-            return text; // 未知指令當作一般訊息傳送
+            return { type: 'text', content: text };
     }
 }
 
@@ -792,4 +979,124 @@ window.renderReactions = function (msgId, reactionsData) {
             $container.append($chip);
         }
     });
+};
+
+// ----------------------
+// Poll System Logic
+// ----------------------
+window.generatePollHtml = function (msgId, pollData) {
+    if (!pollData || !pollData.options) return '';
+
+    // Calculate votes
+    const votes = pollData.votes || {};
+    const totalVotes = Object.keys(votes).length;
+
+    // Count per option
+    const counts = new Array(pollData.options.length).fill(0);
+    Object.values(votes).forEach(optIndex => {
+        if (counts[optIndex] !== undefined) counts[optIndex]++;
+    });
+
+    // Check my vote
+    const myVote = votes[userId];
+
+    let html = `<div class="poll-card" onclick="event.stopPropagation()">`; // Stop propagation to prevent reply
+    html += `<div class="poll-question">${escapeHtml(pollData.question)}</div>`;
+
+    pollData.options.forEach((opt, index) => {
+        const count = counts[index];
+        const percentage = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+        const isVoted = myVote === index;
+
+        html += `
+            <div class="poll-option ${isVoted ? 'voted' : ''}" onclick="votePoll('${msgId}', ${index})">
+                <div class="poll-progress" style="width: ${percentage}%"></div>
+                <div class="poll-text">${escapeHtml(opt)}</div>
+                <div class="poll-count">${count}票 (${percentage}%)</div>
+            </div>
+        `;
+    });
+
+    html += `</div>`;
+    return html;
+};
+
+window.votePoll = function (msgId, optionIndex) {
+    // Update Firebase
+    // messages/{msgId}/poll/votes/{userId} = optionIndex
+    firebase.database().ref(`messages/${msgId}/poll/votes/${userId}`).set(optionIndex);
+};
+
+// ----------------------
+// Code Runner Logic
+// ----------------------
+window.openCodeRunner = function (encodedCode, lang) {
+    const code = decodeURIComponent(encodedCode);
+
+    // Remove existing modal
+    $('#code-runner-modal').remove();
+
+    // Template based on language
+    let finalHtml = '';
+    if (lang === 'javascript' || lang === 'js') {
+        finalHtml = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>body { font-family: sans-serif; padding: 20px; color: #333; }</style>
+            </head>
+            <body>
+                <h3>Console Output:</h3>
+                <div id="console"></div>
+                <script>
+                    // Redirect console.log to div
+                    (function(){
+                        var oldLog = console.log;
+                        var consoleDiv = document.getElementById('console');
+                        console.log = function(...args){
+                            args.forEach(arg => {
+                                consoleDiv.innerHTML += '<div>' + JSON.stringify(arg) + '</div>';
+                            });
+                            oldLog.apply(console, args);
+                        };
+                    })();
+                </script>
+                <script>
+                    try {
+                        ${code}
+                    } catch(e) {
+                         document.getElementById('console').innerHTML += '<div style="color:red">' + e + '</div>';
+                    }
+                </script>
+            </body>
+            </html>
+        `;
+    } else {
+        // HTML (default) - Check if it has charset, if not prepend it
+        if (!code.toLowerCase().includes('<meta charset')) {
+            finalHtml = '<meta charset="UTF-8">' + code;
+        } else {
+            finalHtml = code;
+        }
+    }
+
+    // Create Blob
+    const blob = new Blob([finalHtml], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+
+    // Modal HTML
+    const modalHtml = `
+        <div id="code-runner-modal" class="runner-modal">
+            <div class="runner-content">
+                <div class="runner-header">
+                    <span>Code Preview</span>
+                    <button class="close-runner" onclick="$('#code-runner-modal').remove()">×</button>
+                </div>
+                <iframe src="${url}" class="runner-iframe" sandbox="allow-scripts allow-modals"></iframe>
+            </div>
+        </div>
+    `;
+
+    $('body').append(modalHtml);
 };
