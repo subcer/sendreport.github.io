@@ -207,7 +207,7 @@ $(function () {
     // 發送訊息邏輯
     function write() {
         const nickname = $nickname.val().trim() || '匿名';
-        const content = $content.val();
+        let content = $content.val();
 
         if (content === "" && !selectedImage) return;
 
@@ -223,6 +223,11 @@ $(function () {
         const ss = now.getSeconds().toString().padStart(2, '0');
 
         const timeStr = `${yyyy}/${mm}/${dd} ${hh}:${min}:${ss}`;
+
+        // 處理斜線指令
+        if (content.startsWith('/')) {
+            content = processSlashCommand(content, nickname);
+        }
 
         const postData = {
             nickname: nickname,
@@ -475,6 +480,13 @@ $(function () {
                 </div>
                 <div class="message-content-wrapper">
                     ${isSelf && !isRecalled ? `<button class="recall-btn-v2" onclick="recallMessage('${msgId}')" title="收回訊息">↩</button>` : ''}
+                    
+                    <!-- Reaction Trigger Button -->
+                    ${!isRecalled ? `
+                        <div class="reaction-btn" onclick="event.stopPropagation(); toggleReactionPicker('${msgId}', this)">☺</div>
+                        <!-- Picker Container will be injected dynamically or global -->
+                    ` : ''}
+
                     <!-- 加入點擊事件以觸發回覆 - 使用 data 屬性而非 onclick 以避免語法錯誤 -->
                     <div class="other_text ${isRecalled ? 'recalled' : ''}" 
                          data-msg-id="${msgId}"
@@ -484,10 +496,19 @@ $(function () {
                         ${contentHtml}
                     </div>
                 </div>
+                
+                <!-- Reaction Chips Display -->
+                ${!isRecalled ? `<div id="reactions-${msgId}" class="reaction-chips-container"></div>` : ''}
             </div>
         `;
 
         $showtext.append(messageHtml);
+
+        // Render existing reactions if any
+        if (msg.reactions) {
+            renderReactions(msgId, msg.reactions);
+        }
+
         scrollToBottom();
 
         // 通知 (僅針對來自他人的新訊息且未收回)
@@ -509,12 +530,12 @@ $(function () {
         }
     });
 
-    // 監聽訊息修改 (收回同步) - Listen to 'messages' node
+    // 監聽訊息修改 (收回同步 / 表情回應同步) - Listen to 'messages' node
     messagesRef.on('child_changed', function (snapshot) {
         const msg = snapshot.val();
         const msgId = snapshot.key;
 
-        // 如果訊息變成已收回狀態
+        // 1. 處理收回
         if (msg.recalled) {
             const $msgRow = $(`#${msgId}`);
             const $bubble = $msgRow.find('.other_text');
@@ -525,6 +546,16 @@ $(function () {
             $bubble.removeAttr('onclick'); // 移除點擊事件
             $msgRow.find('.recall-btn-v2').remove(); // 移除收回按鈕
             $msgRow.find('.reply-context').remove(); // 移除引用
+            $msgRow.find('.reaction-btn').remove(); // Remove reaction button
+            $msgRow.find('.reaction-chips-container').remove(); // Remove chips
+        }
+
+        // 2. 處理表情回應更新
+        if (msg.reactions) {
+            renderReactions(msgId, msg.reactions);
+        } else {
+            // If reactions were removed entirely
+            $(`#reactions-${msgId}`).empty();
         }
     });
 
@@ -640,3 +671,125 @@ function parseMarkdown(text) {
 
     return text;
 }
+
+// 斜線指令處理器
+function processSlashCommand(text, nickname) {
+    if (!text.startsWith('/')) return text;
+
+    const match = text.match(/^\/(\w+)\s*(.*)/);
+    if (!match) return text;
+
+    const command = match[1].toLowerCase();
+    const args = match[2].trim();
+
+    switch (command) {
+        case 'roll':
+            let max = 100;
+            if (args) {
+                const parts = args.split(/[^\d]+/); // Split by non-digits
+                if (parts.length >= 1 && parts[0]) {
+                    max = parseInt(parts[0], 10);
+                }
+            }
+            const rollResult = Math.floor(Math.random() * max) + 1;
+            return `🎲 ${nickname} 擲出了 **${rollResult}** 點 (1-${max})`;
+
+        case 'coin':
+            const isHeads = Math.random() < 0.5;
+            return `🪙 ${nickname} 擲出了 **${isHeads ? '正面' : '反面'}**`;
+
+        case 'me':
+            return `* ${nickname} ${args} *`;
+
+        // 隱藏指令：計算機
+        case 'calc':
+            try {
+                // 安全限制：只允許數字和基本運算符
+                if (/^[0-9+\-*/().\s]+$/.test(args)) {
+                    // eslint-disable-next-line no-new-func
+                    const result = new Function('return ' + args)();
+                    return `🧮 ${args} = **${result}**`;
+                }
+                return text;
+            } catch (e) {
+                return text;
+            }
+
+        default:
+            return text; // 未知指令當作一般訊息傳送
+    }
+}
+
+// ----------------------
+// Message Reactions Logic
+// ----------------------
+let activePickerId = null;
+
+// Toggle Picker
+window.toggleReactionPicker = function (msgId, btnElement) {
+    // If clicking same button, verify if we should close or open
+    const existingPicker = $(btnElement).parent().find('.reaction-picker');
+
+    // Close any other open pickers
+    $('.reaction-picker').remove();
+    activePickerId = null;
+
+    if (existingPicker.length > 0) {
+        // Already open, logic above removed it, so we are toggling OFF.
+        return;
+    }
+
+    const emojis = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+    let pickerHtml = `<div class="reaction-picker">`;
+    emojis.forEach(emoji => {
+        pickerHtml += `<span class="reaction-option" onclick="event.stopPropagation(); triggerReaction('${msgId}', '${emoji}')">${emoji}</span>`;
+    });
+    pickerHtml += `</div>`;
+
+    $(btnElement).parent().append(pickerHtml);
+    activePickerId = msgId;
+
+    // Click elsewhere to close
+    $(document).one('click', function () {
+        $('.reaction-picker').remove();
+        activePickerId = null;
+    });
+};
+
+// Trigger Reaction (Update Firebase)
+window.triggerReaction = function (msgId, emoji) {
+    $('.reaction-picker').remove(); // Close picker
+    const userReactionRef = firebase.database().ref(`messages/${msgId}/reactions/${emoji}/${userId}`);
+
+    userReactionRef.once('value', snapshot => {
+        if (snapshot.exists()) {
+            userReactionRef.remove(); // Toggle OFF
+        } else {
+            userReactionRef.set(true); // Toggle ON
+        }
+    });
+};
+
+// Render Reactions (UI Update)
+window.renderReactions = function (msgId, reactionsData) {
+    const $container = $(`#reactions-${msgId}`);
+    $container.empty();
+
+    if (!reactionsData) return;
+
+    Object.keys(reactionsData).forEach(emoji => {
+        const users = reactionsData[emoji]; // Object of userIds
+        const count = Object.keys(users).length;
+        const iReacted = users[userId] === true;
+
+        if (count > 0) {
+            const $chip = $(`
+                <div class="reaction-chip ${iReacted ? 'active' : ''}" onclick="triggerReaction('${msgId}', '${emoji}')">
+                    <span>${emoji}</span>
+                    <span>${count}</span>
+                </div>
+            `);
+            $container.append($chip);
+        }
+    });
+};

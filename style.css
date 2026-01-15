@@ -687,7 +687,8 @@ body {
 .other_text:hover::after {
     content: '↩ 回覆';
     position: absolute;
-    right: -50px;
+    right: -90px;
+    /* Moved further right to avoid overlapping with reaction button */
     top: 50%;
     transform: translateY(-50%);
     font-size: 11px;
@@ -971,7 +972,136 @@ code {
 }
 
 .other_text i,
-.other_text em {
-    font-style: italic;
-    color: #ccc;
+font-style: italic;
+color: #ccc;
+}
+
+/* Reaction System Styles */
+.reaction-wrapper {
+    position: relative;
+}
+
+.reaction-btn {
+    position: absolute;
+    right: -30px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 24px;
+    background: #333;
+    border: 1px solid #555;
+    border-radius: 50%;
+    color: #aaa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    cursor: pointer;
+    opacity: 0;
+    transition: all 0.2s;
+    z-index: 100;
+}
+
+.reaction-btn:hover {
+    background: #444;
+    color: #fff;
+    transform: translateY(-50%) scale(1.1);
+}
+
+/* Show on hover (desktop) */
+.message-content-wrapper:hover .reaction-btn {
+    opacity: 1;
+    right: -36px;
+}
+
+/* Reaction Picker Popup */
+.reaction-picker {
+    position: absolute;
+    bottom: 110%;
+    /* Default fallback */
+    left: 0;
+    background: #2a2a2a;
+    border: 1px solid #555;
+    border-radius: 20px;
+    padding: 4px 8px;
+    display: flex;
+    gap: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    z-index: 1000;
+    white-space: nowrap;
+}
+
+/* Align picker for others (Left side) */
+.message-row.other .reaction-picker {
+    left: 0;
+    transform: translateX(0);
+}
+
+/* Align picker for self (Right side) */
+.message-row.self .reaction-picker {
+    left: auto;
+    right: 0;
+    transform: translateX(0);
+}
+
+.reaction-picker.hidden {
+    display: none;
+}
+
+.reaction-option {
+    font-size: 18px;
+    padding: 2px 4px;
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+
+.reaction-option:hover {
+    transform: scale(1.3);
+}
+
+/* Reaction Chips (Display) */
+.reaction-chips-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+    justify-content: flex-end;
+    /* Default for self? or handle by parent flex check */
+}
+
+/* Align chips based on message sender */
+.message-row.other .reaction-chips-container {
+    justify-content: flex-start;
+    margin-left: 2px;
+}
+
+.message-row.self .reaction-chips-container {
+    justify-content: flex-end;
+    margin-right: 2px;
+}
+
+.reaction-chip {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid #444;
+    border-radius: 12px;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: #aaa;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    transition: all 0.2s;
+}
+
+.reaction-chip:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: #666;
+}
+
+.reaction-chip.active {
+    background: rgba(0, 102, 204, 0.3);
+    /* Blue tint */
+    border-color: #0066cc;
+    color: #fff;
 }
