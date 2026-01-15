@@ -367,8 +367,10 @@ body {
 
 .floating-clear-btn {
     position: fixed;
-    top: 15px;
-    right: 15px;
+    top: 8px;
+    /* Centered in 55px header: (55-40)/2 = 7.5 */
+    right: 20px;
+    /* Align with header padding */
     background-color: rgba(45, 45, 45, 0.8);
     border: 1px solid #444;
     color: #ff4444;
